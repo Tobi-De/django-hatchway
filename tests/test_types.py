@@ -1,10 +1,10 @@
 from typing import Literal, Optional, Union
 
+import msgspec
 from django.core.files import File
 
 from hatchway.http import ApiResponse
 from hatchway.types import (
-    BaseModel,
     Query,
     QueryType,
     acceptable_input,
@@ -68,10 +68,10 @@ def test_acceptable_input():
 
 
 def test_is_model_subclass():
-    class ModelSubclass(BaseModel):
+    class ModelSubclass(msgspec.Struct):
         pass
 
     assert is_model_subclass(str) is False
     assert is_model_subclass(type) is False
-    assert is_model_subclass(BaseModel) is True
+    assert is_model_subclass(msgspec.Struct) is True
     assert is_model_subclass(ModelSubclass) is True

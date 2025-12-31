@@ -43,7 +43,7 @@ view, and decorate it with ``@api_view.get``, ``@api_view.post`` or similar:
 
 The types of your function arguments matter; Hatchway will use them to work out
 where to get their values from and how to parse them. All the standard Python
-types are supported, plus `Pydantic-style models <https://docs.pydantic.dev/>`_
+types are supported, plus structured Schema models based on ``msgspec.Struct``
 (which ideally you should build based on the ``hatchway.Schema`` base class,
 as it understands how to load things from Django model instances).
 
@@ -99,7 +99,7 @@ By default, Hatchway will pull arguments from these sources:
 
 * Standard Python singular types (``int``, ``str``, ``float``, etc.): Path first, and then Query
 * Python collection types (``list[int]``, etc.): Query only, with implicit list conversion of either one or multiple values
-* ``hatchway.Schema``/Pydantic BaseModel subclasses: Body only (see Model Sourcing below)
+* ``hatchway.Schema`` subclasses (msgspec Struct models): Body only (see Model Sourcing below)
 * ``django.core.files.File``: File only
 
 You can override where Hatchway pulls an argument from by using one of the
@@ -124,9 +124,8 @@ picked from only that source, there are some more complex ones in there:
 Model Sourcing
 ~~~~~~~~~~~~~~
 
-When you define a ``hatchway.Schema`` subclass (or any other pydantic model
-subclass), Hatchway will presume that it should pull it from the POST/PUT/etc.
-body.
+When you define a ``hatchway.Schema`` subclass (msgspec Struct model),
+Hatchway will presume that it should pull it from the POST/PUT/etc. body.
 
 How it pulls it depends on how many body-sourced arguments you have:
 
@@ -179,8 +178,8 @@ subclass constructors, and then typechecking that you're always returnining
 the right things from the view.
 
 You can also use generics like ``list[MySchemaClass]`` or
-``dict[str, MySchemaClass]`` as a response type; generally, anything Pydantic
-allows, we do as well.
+``dict[str, MySchemaClass]`` as a response type; generally, anything msgspec
+supports, we do as well.
 
 Adding Headers/Status Codes to the Response
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~

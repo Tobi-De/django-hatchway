@@ -1,7 +1,11 @@
+import msgspec
+
 from .http import ApiError, ApiResponse  # noqa
-from .schema import Field, Schema  # noqa
+from .schema import Schema  # noqa
 from .types import Body, BodyDirect, File, Path, PathOrQuery, Query, QueryOrBody  # noqa
 from .urls import methods  # noqa
 from .view import api_view  # noqa
 
-__version__ = "0.5.2"
+# Re-export msgspec.Meta for convenience
+Meta = msgspec.Meta  # noqa
+

@@ -1,12 +1,12 @@
 import json
 
+import msgspec
 import pytest
 from django.core import files
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.http import QueryDict
 from django.test import RequestFactory
 from django.test.client import MULTIPART_CONTENT
-from pydantic import BaseModel
 
 from hatchway import ApiError, Body, QueryOrBody, api_view
 from hatchway.view import ApiView
@@ -59,10 +59,10 @@ def test_basic_view():
 
 def test_body_direct():
     """
-    Tests that a Pydantic model with BodyDirect gets its fields from the top level
+    Tests that a msgspec model with BodyDirect gets its fields from the top level
     """
 
-    class TestModel(BaseModel):
+    class TestModel(msgspec.Struct):
         number: int
         name: str
 
@@ -106,10 +106,10 @@ def test_list_arg(arg_type):
 def test_list_response():
     """
     Tests that a view with a list response type works correctly with both
-    dicts and pydantic model instances.
+    dicts and msgspec model instances.
     """
 
-    class TestModel(BaseModel):
+    class TestModel(msgspec.Struct):
         number: int
         name: str
 
@@ -226,8 +226,7 @@ def test_api_error():
 
 def test_unusable_type():
     """
-    Tests that you get a nice error when you use a type on an input that
-    Pydantic doesn't understand.
+    Tests that you get a nice error when you use an unsupported type.
     """
 
     with pytest.raises(ValueError):
@@ -267,16 +266,10 @@ def test_string_not_list():
         return 1
 
     response = test_view(RequestFactory().get("/test/?id=notalist"))
-    assert json.loads(response.content) == {
-        "error": "invalid_input",
-        "error_details": [
-            {
-                "loc": ["id"],
-                "msg": "value is not a valid list",
-                "type": "type_error.list",
-            }
-        ],
-    }
+    result = json.loads(response.content)
+    assert result["error"] == "invalid_input"
+    assert len(result["error_details"]) == 1
+    assert "array" in result["error_details"][0]["msg"] or "list" in result["error_details"][0]["msg"]
     assert response.status_code == 400
 
 

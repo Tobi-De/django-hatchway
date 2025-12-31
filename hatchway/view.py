@@ -2,10 +2,10 @@ import json
 from collections.abc import Callable
 from typing import Any, Optional, get_origin, get_type_hints
 
+import msgspec
 from django.core import files
 from django.http import HttpRequest, HttpResponseNotAllowed, QueryDict
 from django.http.multipartparser import MultiPartParser
-from pydantic import BaseModel, ValidationError, create_model
 
 from .constants import InputSource
 from .http import ApiError, ApiResponse
@@ -88,8 +88,7 @@ class ApiView:
     def sources_for_input(cls, input_type) -> tuple[list[InputSource], Any]:
         """
         Given a type that can appear as a request parameter type, returns
-        what sources it can come from, and what its type is as understood
-        by Pydantic.
+        what sources it can come from and its resolved type.
         """
         signifier, input_type = extract_signifier(input_type)
         origin_type = get_origin(input_type)
@@ -99,9 +98,9 @@ class ApiView:
         elif signifier is BodyType:
             return ([InputSource.body], input_type)
         elif signifier is BodyDirectType:
-            if not issubclass(input_type, BaseModel):
+            if not is_model_subclass(input_type):
                 raise ValueError(
-                    "You cannot use BodyDirect on something that is not a Pydantic model"
+                    "You cannot use BodyDirect on something that is not a Schema model"
                 )
             return ([InputSource.body_direct], input_type)
         elif signifier is PathType:
@@ -116,7 +115,7 @@ class ApiView:
             return ([InputSource.query, InputSource.body], input_type)
         elif signifier is PathOrQueryType:
             return ([InputSource.path, InputSource.query], input_type)
-        # Is it a Pydantic model, which means it's implicitly body?
+        # Schema models are implicitly body
         elif is_model_subclass(input_type):
             return ([InputSource.body], input_type)
         # Collections only come from the query, with implicit list conversion
@@ -166,7 +165,7 @@ class ApiView:
     def compile(self):
         self.sources: dict[str, list[InputSource]] = {}
         amount_from_body = 0
-        pydantic_model_dict = {}
+        model_dict = {}
         self.input_files = set()
         last_body_type = None
         # For each input item, work out where to pull it from
@@ -180,17 +179,17 @@ class ApiView:
                 raise ValueError(
                     f"Input argument {name} has an unsupported type {inner_type}"
                 )
-            sources, pydantic_type = self.sources_for_input(input_type)
+            sources, model_type = self.sources_for_input(input_type)
             self.sources[name] = sources
             # Keep count of how many are pulling from the body
             if InputSource.body in sources:
                 amount_from_body += 1
-                last_body_type = pydantic_type
+                last_body_type = model_type
             if InputSource.file in sources:
                 self.input_files.add(name)
             else:
-                pydantic_model_dict[name] = (Optional[pydantic_type], ...)
-        # If there is just one thing pulling from the body and it's a BaseModel,
+                model_dict[name] = (Optional[model_type], ...)
+        # If there is just one thing pulling from the body and it's a Schema model,
         # signify that it's actually pulling from the body keys directly and
         # not a sub-dict
         if amount_from_body == 1:
@@ -198,23 +197,34 @@ class ApiView:
                 if (
                     InputSource.body in sources
                     and isinstance(last_body_type, type)
-                    and issubclass(last_body_type, BaseModel)
+                    and is_model_subclass(last_body_type)
                 ):
                     self.sources[name] = [
                         x for x in sources if x != InputSource.body
                     ] + [InputSource.body_direct]
-        # Turn all the main arguments into Pydantic parsing models
+        # Turn all the main arguments into msgspec struct models
         try:
-            self.input_model = create_model(
-                f"{self.view_name}_input", **pydantic_model_dict
+            # Build field list for msgspec.defstruct
+            field_list = []
+            for name, model_type in model_dict.items():
+                if isinstance(model_type, tuple):
+                    field_type = model_type[0]
+                else:
+                    field_type = model_type
+                field_list.append((name, Optional[field_type]))
+
+            self.input_model = msgspec.defstruct(
+                f"{self.view_name}_input",
+                field_list
             )
-        except RuntimeError:
+        except (RuntimeError, TypeError) as e:
             raise ValueError(
-                f"One or more inputs on view {self.view_name} have a bad configuration"
+                f"One or more inputs on view {self.view_name} have a bad configuration: {e}"
             )
         if self.output_type is not None:
-            self.output_model = create_model(
-                f"{self.view_name}_output", value=(self.output_type, ...)
+            self.output_model = msgspec.defstruct(
+                f"{self.view_name}_output",
+                [("value", self.output_type)]
             )
 
     def __call__(self, request: HttpRequest, *args, **kwargs):
@@ -279,19 +289,25 @@ class ApiView:
                     raise ValueError(f"Unknown source {source}")
             else:
                 values[name] = None
-        # Give that to the Pydantic model to make it handle stuff
+        # Validate and coerce types
         try:
-            model_instance = self.input_model(**values)
-        except ValidationError as error:
+            model_instance = msgspec.convert(values, type=self.input_model, strict=False)
+        except msgspec.ValidationError as error:
+            error_msg = str(error)
+            error_details = [{
+                'loc': ['<unknown>'],
+                'msg': error_msg,
+                'type': 'value_error',
+            }]
             return ApiResponse(
-                {"error": "invalid_input", "error_details": error.errors()},
+                {"error": "invalid_input", "error_details": error_details},
                 status=400,
                 finalize=True,
             )
         kwargs = {
             name: getattr(model_instance, name)
-            for name in model_instance.__fields__
-            if values[name] is not None  # Trim out missing fields
+            for name in model_instance.__struct_fields__
+            if name in values and values[name] is not None  # Trim out missing fields
         }
         # Add in any files
         # TODO: HTTP error if file is not optional
@@ -316,11 +332,35 @@ class ApiView:
         # If it's not an ApiResponse, make it one
         if not isinstance(response, ApiResponse):
             response = ApiResponse(response)
-        # Get pydantic to coerce the output response
+        # Use msgspec to coerce the output response
         if self.output_type is not None:
-            response.data = self.output_model(value=response.data).dict()["value"]
-        elif isinstance(response.data, BaseModel):
-            response.data = response.data.dict()
+            # Check if we need to convert Django ORM objects first
+            data_to_convert = response.data
+            origin = get_origin(self.output_type)
+
+            # Handle list[Schema] case - convert ORM objects
+            if origin in (list, set, tuple) and data_to_convert:
+                import django.db.models
+                # Check if first item is a Django model instance
+                first_item = next(iter(data_to_convert), None)
+                if first_item and isinstance(first_item, django.db.models.Model):
+                    # Get the schema type from the output type
+                    from typing import get_args
+                    schema_type = get_args(self.output_type)[0]
+                    if is_model_subclass(schema_type):
+                        # Convert each ORM object using from_orm
+                        data_to_convert = [schema_type.from_orm(obj) for obj in data_to_convert]
+            # Handle single Schema case
+            elif not isinstance(data_to_convert, (dict, list, str, int, float, bool, type(None))):
+                import django.db.models
+                if isinstance(data_to_convert, django.db.models.Model):
+                    if is_model_subclass(self.output_type):
+                        data_to_convert = self.output_type.from_orm(data_to_convert)
+
+            validated = msgspec.convert({"value": data_to_convert}, type=self.output_model, strict=False)
+            response.data = msgspec.to_builtins(validated)["value"]
+        elif isinstance(response.data, msgspec.Struct):
+            response.data = msgspec.to_builtins(response.data)
         response.finalize()
         return response
 

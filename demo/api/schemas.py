@@ -1,6 +1,7 @@
 from datetime import datetime
+from typing import Annotated
 
-from hatchway import Field, Schema
+from hatchway import Meta, Schema
 
 
 class PostSchema(Schema):
@@ -31,9 +32,9 @@ class PostListSchema(Schema):
 class PostCreateSchema(Schema):
     """Schema for creating posts - demonstrates input validation"""
 
-    title: str = Field(min_length=1, max_length=200)
-    content: str = Field(min_length=1)
-    author_id: int = Field(gt=0)
+    title: Annotated[str, Meta(min_length=1, max_length=200)]
+    content: Annotated[str, Meta(min_length=1)]
+    author_id: Annotated[int, Meta(gt=0)]
     published: bool = False
     tags: list[str] = []
 
@@ -41,8 +42,8 @@ class PostCreateSchema(Schema):
 class PostUpdateSchema(Schema):
     """Schema for updating posts - all fields optional"""
 
-    title: str | None = Field(None, min_length=1, max_length=200)
-    content: str | None = Field(None, min_length=1)
+    title: Annotated[str, Meta(min_length=1, max_length=200)] | None = None
+    content: Annotated[str, Meta(min_length=1)] | None = None
     published: bool | None = None
     tags: list[str] | None = None
 
@@ -61,9 +62,9 @@ class CommentSchema(Schema):
 class CommentCreateSchema(Schema):
     """Schema for creating comments"""
 
-    author_name: str = Field(min_length=1, max_length=100)
-    content: str = Field(min_length=1)
-    rating: int = Field(ge=0, le=5, default=0)
+    author_name: Annotated[str, Meta(min_length=1, max_length=100)]
+    content: Annotated[str, Meta(min_length=1)]
+    rating: Annotated[int, Meta(ge=0, le=5)] = 0
 
 
 class ErrorSchema(Schema):

@@ -1,52 +1,40 @@
-from typing import Any
+from typing import Any, Dict
 
+import msgspec
 from django.db.models import Manager, QuerySet
 from django.db.models.fields.files import FieldFile
 from django.template import Variable, VariableDoesNotExist
-from pydantic.fields import Field  # noqa
-from pydantic.main import BaseModel
-from pydantic.utils import GetterDict
 
 
-class DjangoGetterDict(GetterDict):
-    def __init__(self, obj: Any):
-        self._obj = obj
+class Schema(msgspec.Struct, omit_defaults=True, gc=False):
+    """Base schema class with Django ORM support."""
 
-    def __getitem__(self, key: str) -> Any:
-        try:
-            item = getattr(self._obj, key)
-        except AttributeError:
+    @classmethod
+    def from_orm(cls, obj: Any):
+        """Convert a Django ORM object to a schema instance."""
+        data = {}
+        for field_name in cls.__struct_fields__:
             try:
-                item = Variable(key).resolve(self._obj)
-            except VariableDoesNotExist as e:
-                raise KeyError(key) from e
-        return self._convert_result(item)
+                value = getattr(obj, field_name)
+            except AttributeError:
+                try:
+                    value = Variable(field_name).resolve(obj)
+                except VariableDoesNotExist:
+                    continue
 
-    def get(self, key: Any, default: Any = None) -> Any:
-        try:
-            return self[key]
-        except KeyError:
-            return default
+            if isinstance(value, Manager):
+                value = list(value.all())
+            elif isinstance(value, getattr(QuerySet, "__origin__", QuerySet)):
+                value = list(value)
+            elif callable(value):
+                value = value()
+            elif isinstance(value, FieldFile):
+                value = value.url if value else None
 
-    def _convert_result(self, result: Any) -> Any:
-        if isinstance(result, Manager):
-            return list(result.all())
+            data[field_name] = value
 
-        elif isinstance(result, getattr(QuerySet, "__origin__", QuerySet)):
-            return list(result)
+        return msgspec.convert(data, type=cls)
 
-        if callable(result):
-            return result()
-
-        elif isinstance(result, FieldFile):
-            if not result:
-                return None
-            return result.url
-
-        return result
-
-
-class Schema(BaseModel):
-    class Config:
-        orm_mode = True
-        getter_dict = DjangoGetterDict
+    def dict(self) -> Dict[str, Any]:
+        """Convert schema instance to a dictionary."""
+        return msgspec.to_builtins(self)

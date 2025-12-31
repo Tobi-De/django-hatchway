@@ -8,9 +8,9 @@ These benchmarks measure the performance of core Hatchway components:
 - Request processing overhead
 """
 
+import msgspec
 import pytest
 from django.test import RequestFactory
-from pydantic import BaseModel
 
 from hatchway import Body, Query, QueryOrBody, Schema, api_view
 

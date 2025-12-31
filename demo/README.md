@@ -29,9 +29,9 @@ This demo includes a blog-style API with Posts and Comments that demonstrates:
 - `methods()` helper - Multiple methods on same URL
 
 ### Schema Features
-- **ORM Integration**: Automatic conversion of Django models to schemas
-- **Validation**: Pydantic field validators (min_length, max_length, ge, le)
-- **Callable attributes**: `comment_count()` method auto-invoked by DjangoGetterDict
+- **ORM Integration**: Automatic conversion of Django models to schemas via `from_orm()`
+- **Validation**: msgspec Meta constraints (min_length, max_length, ge, le, gt)
+- **Callable attributes**: `comment_count()` method auto-invoked during serialization
 - **Optional fields**: Using `| None` for nullable fields
 - **Nested schemas**: Comments nested under posts
 
@@ -183,7 +183,7 @@ Access the Django admin at `http://localhost:8000/admin/` to manage posts and co
 ## Code Structure
 
 - `models.py` - Django ORM models (Post, Comment)
-- `schemas.py` - Pydantic schemas for validation and serialization
+- `schemas.py` - msgspec schemas for validation and serialization
 - `views.py` - API views with extensive comments explaining each feature
 - `urls.py` - URL routing with examples of both direct mapping and `methods()` helper
 - `admin.py` - Django admin configuration
@@ -212,7 +212,7 @@ See `../benchmarks/README.md` for detailed information on benchmarking.
 
 1. Start by reading `views.py` - each view has detailed comments explaining what feature it demonstrates
 2. Try each endpoint with different parameters to see how validation works
-3. Look at `schemas.py` to see how Pydantic validators are applied
+3. Look at `schemas.py` to see how msgspec Meta constraints are applied
 4. Check `urls.py` to see the `methods()` helper in action for multi-method routing
 5. Experiment with the square bracket notation for lists and dicts in form data
 6. Run benchmarks to understand performance characteristics
