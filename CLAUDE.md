@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-django-hatchway is a Django API framework that provides FastAPI-like type-annotated views while maintaining compatibility with standard Django patterns. It uses Pydantic for input validation and output serialization, with automatic parameter sourcing from URLs, query strings, request bodies, and files.
+django-hatchway is a Django API framework that provides FastAPI-like type-annotated views while maintaining compatibility with standard Django patterns. It uses msgspec for high-performance input validation and output serialization, with automatic parameter sourcing from URLs, query strings, request bodies, and files.
 
 ## Development Commands
 
@@ -78,20 +78,20 @@ This project uses **uv** for dependency management. The `pyproject.toml` uses `u
 **hatchway/view.py** - The `ApiView` class is the central request processor:
 - Wraps function-based views with `@api_view.get`, `@api_view.post`, etc. decorators
 - Introspects function type hints to determine where to source each parameter (path, query, body, file)
-- Uses Pydantic models for input validation and output coercion
+- Uses msgspec for input validation and output coercion
 - `compile()` method analyzes view signatures at initialization time to build parameter routing
 - `__call__()` method handles request processing, parameter extraction, validation, and response formatting
 
 **hatchway/types.py** - Defines type annotations for explicit parameter sourcing:
 - `Path[T]`, `Query[T]`, `Body[T]`, `File[T]` - single-source annotations
 - `PathOrQuery[T]`, `QueryOrBody[T]` - multi-source fallback annotations
-- `BodyDirect[T]` - forces Pydantic models to pull from top-level body keys
+- `BodyDirect[T]` - forces Schema models to pull from top-level body keys
 - `extract_signifier()` function unwraps these annotations to determine the source
 - `acceptable_input()` validates that parameter types are supported
 
 **hatchway/schema.py** - Django ORM integration:
-- `Schema` extends Pydantic's `BaseModel` with `DjangoGetterDict`
-- Automatically converts Django model instances to schema instances
+- `Schema` extends `msgspec.Struct` for high-performance serialization
+- Automatically converts Django model instances to schema instances via `from_orm()`
 - Handles Django-specific types: `Manager`, `QuerySet`, `FieldFile` (converts to URL)
 - Supports callable attributes (methods) by automatically calling them
 
@@ -111,10 +111,10 @@ The framework automatically determines parameter sources based on type hints:
 
 1. **Simple types** (`int`, `str`, `float`): Path first, then Query
 2. **Collections** (`list[int]`, `set[str]`): Query only, with implicit list conversion
-3. **Pydantic models**: Body only (unless annotated with `BodyDirect`)
+3. **Schema models**: Body only (unless annotated with `BodyDirect`)
 4. **Django File objects**: File only
 
-**Body sourcing with multiple parameters**: When multiple parameters source from the body, each looks for a sub-key with its name. When only ONE parameter sources from the body and it's a BaseModel, it automatically switches to `body_direct` mode (top-level keys).
+**Body sourcing with multiple parameters**: When multiple parameters source from the body, each looks for a sub-key with its name. When only ONE parameter sources from the body and it's a Schema model, it automatically switches to `body_direct` mode (top-level keys).
 
 **Square bracket notation**: The framework supports `name[]` for lists and `name[key]` for dicts in query params and form data (see `get_values()` in view.py:130-164).
 
@@ -148,13 +148,14 @@ def create_item(request, data: MySchema, mode: Body[str] = "normal") -> int:
 ### Schema Definition
 
 ```python
-from hatchway import Schema, Field
+from typing import Annotated
+from hatchway import Schema, Meta
 
 class MySchema(Schema):
     name: str
-    age: int = Field(gt=0)  # Pydantic validation
+    age: Annotated[int, Meta(gt=0)]  # msgspec validation
 
-    # Can be instantiated from Django model instances due to DjangoGetterDict
+    # Can be instantiated from Django model instances via from_orm()
 ```
 
 ### Error Handling
@@ -185,8 +186,9 @@ def my_view(request) -> ApiResponse[dict]:
 ## Important Notes
 
 - The project requires Python 3.10+ and Django 4.0+
-- Uses Pydantic v1.10 (note the `~=1.10` constraint in dependencies)
+- Uses msgspec>=0.18.0 for high-performance serialization
 - All API views are automatically CSRF exempt (`csrf_exempt = True` on ApiView and Methods)
-- PUT/PATCH requests require special handling for multipart and form data (see view.py:233-242)
+- PUT/PATCH requests require special handling for multipart and form data
 - Input validation errors return 400 with `{"error": "invalid_input", "error_details": [...]}`
 - Output types are optional but recommended for type safety throughout the view
+- Schema models use `msgspec.Struct` with `omit_defaults=True` and `gc=False` for optimal performance

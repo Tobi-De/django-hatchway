@@ -12,8 +12,8 @@ from typing import (  # type: ignore[attr-defined]
     get_origin,
 )
 
+import msgspec
 from django.core import files
-from pydantic import BaseModel
 
 from .http import ApiResponse
 
@@ -46,7 +46,7 @@ class FileType:
 
 class BodyDirectType:
     """
-    A Pydantic model whose keys are all looked for in the top-level
+    A Schema model whose keys are all looked for in the top-level
     POST data, rather than in a dict under a key named after the input.
     """
 
@@ -163,10 +163,10 @@ def acceptable_input(annotation) -> bool:
 
 def is_model_subclass(thing) -> bool:
     """
-    Returns if `thing` is a subclass of pydantic.BaseModel or not, safely
+    Returns if `thing` is a subclass of msgspec.Struct (Schema) or not, safely
     """
     try:
-        if issubclass(thing, BaseModel):
+        if isinstance(thing, type) and issubclass(thing, msgspec.Struct):
             return True
     except TypeError:
         pass

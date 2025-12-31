@@ -140,9 +140,11 @@ def post_update(request, id: int, data: PostUpdateSchema) -> PostSchema:
     """
     post = get_object_or_404(Post, id=id)
 
-    # Update only provided fields
-    for field, value in data.dict(exclude_unset=True).items():
-        setattr(post, field, value)
+    # Update only provided fields (non-None values)
+    # Note: msgspec doesn't track unset fields, so we filter None values
+    for field, value in data.dict().items():
+        if value is not None:
+            setattr(post, field, value)
 
     post.save()
     return post
