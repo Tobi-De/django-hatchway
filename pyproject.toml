@@ -24,7 +24,7 @@ classifiers = [
 ]
 dependencies = [
   "django>=4",
-  "msgspec>=0.18.0",
+  "msgspec>=0.18",
 ]
 
 [dependency-groups]
@@ -33,9 +33,9 @@ dev = [
   "pytest-django~=4.5",
 ]
 bench = [
-  "pytest-benchmark~=4.0",
   "factory-boy~=3.3",
   "faker~=22.0",
+  "pytest-benchmark~=4.0",
 ]
 
 [tool.setuptools.dynamic]

@@ -82,9 +82,7 @@ class TestListEndpointPerformance:
         from api.views import post_list
 
         # Note: tags parameter expects a list, so use multiple values
-        request = request_factory.get(
-            "/api/posts/?published=true&limit=20&offset=10"
-        )
+        request = request_factory.get("/api/posts/?published=true&limit=20&offset=10")
 
         result = benchmark(post_list, request)
         assert result.status_code == 200

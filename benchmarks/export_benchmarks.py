@@ -113,8 +113,12 @@ def export_to_markdown(data, output_file):
 
         # Results table
         f.write("## Results\n\n")
-        f.write("| Name | Min (µs) | Max (µs) | Mean (µs) | Median (µs) | StdDev | OPS |\n")
-        f.write("|------|----------|----------|-----------|-------------|--------|-----|\n")
+        f.write(
+            "| Name | Min (µs) | Max (µs) | Mean (µs) | Median (µs) | StdDev | OPS |\n"
+        )
+        f.write(
+            "|------|----------|----------|-----------|-------------|--------|-----|\n"
+        )
 
         for b in benchmarks:
             stats = b["stats"]

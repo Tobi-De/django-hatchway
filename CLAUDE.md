@@ -105,6 +105,24 @@ This project uses **uv** for dependency management. The `pyproject.toml` uses `u
 path("api/item/<id>/", methods(get=item_get, delete=item_delete))
 ```
 
+**hatchway/models.py** - Authentication token model:
+- `AuthToken` - Database model for token-based authentication
+- Stores secure tokens with expiration dates
+- Class method `create_token(user, days_valid=365, description="")` generates secure tokens
+- Property `is_expired` checks token validity
+
+**hatchway/auth.py** - Authentication backend system:
+- `AuthBackend` - Protocol defining the authentication backend interface
+- `SessionAuthBackend` - Authenticates via Django's session middleware (`request.user`)
+- `TokenAuthBackend` - Authenticates via `Authorization: Token <token>` header
+- `authenticate_request(request, backends=None)` - Tries backends in sequence, returns `(user, backend_name)` tuple
+- `get_default_backends()` - Loads backends from `HATCHWAY_AUTH_BACKENDS` setting or uses defaults
+
+**hatchway/permissions.py** - Permission checking utilities:
+- `check_permissions(user, permissions)` - Validates user has all required Django permissions
+- `require_authentication(user)` - Validates user is authenticated
+- Both return `(bool, error_msg)` tuples for consistent error handling
+
 ### Parameter Sourcing Logic
 
 The framework automatically determines parameter sources based on type hints:
@@ -117,6 +135,32 @@ The framework automatically determines parameter sources based on type hints:
 **Body sourcing with multiple parameters**: When multiple parameters source from the body, each looks for a sub-key with its name. When only ONE parameter sources from the body and it's a Schema model, it automatically switches to `body_direct` mode (top-level keys).
 
 **Square bracket notation**: The framework supports `name[]` for lists and `name[key]` for dicts in query params and form data (see `get_values()` in view.py:130-164).
+
+### Authentication Flow
+
+The `ApiView` class integrates authentication through decorator parameters:
+
+```python
+@api_view.get(auth=True, permissions=["app.permission"])
+def protected_view(request) -> dict:
+    # request.user is guaranteed to be authenticated with the permission
+    return {"user_id": request.user.id}
+```
+
+**Authentication processing happens in `ApiView.__call__()`** after method checking but before input parsing:
+
+1. **Backend selection**: If `auth` is a list of backend class paths, instantiate them; otherwise use defaults
+2. **Authentication attempt**: Call `authenticate_request(request, backends)` which tries backends in sequence
+3. **User assignment**: If successful, set `request.user` to the authenticated user
+4. **Auth requirement check**: If `auth=True`, verify user is authenticated (return 401 if not)
+5. **Permission check**: If `permissions` list provided, verify user has all perms (return 401 or 403 if not)
+6. **Continue to input parsing**: Only reached if all auth/permission checks pass
+
+**Error responses**:
+- **401 Unauthorized**: `{"error": "authentication_required"}` - User not authenticated
+- **403 Forbidden**: `{"error": "permission_denied"}` - User lacks required permission
+
+**Backend sequencing**: Backends are tried in order until one returns a user. Default order: SessionAuthBackend, then TokenAuthBackend. This allows requests to use either session cookies or API tokens.
 
 ### Test Structure
 
@@ -183,6 +227,40 @@ def my_view(request) -> ApiResponse[dict]:
     )
 ```
 
+### Authentication & Permissions
+
+```python
+from hatchway import api_view, ApiError
+
+# Basic authentication requirement
+@api_view.get(auth=True)
+def user_profile(request) -> dict:
+    return {
+        "user_id": request.user.id,
+        "username": request.user.username
+    }
+
+# Authentication + permission check
+@api_view.post(auth=True, permissions=["blog.add_post"])
+def create_post(request, data: PostSchema) -> PostSchema:
+    post = Post.objects.create(author=request.user, **data.dict())
+    return post
+
+# Custom backend selection (token-only, no sessions)
+@api_view.get(auth=["hatchway.auth.TokenAuthBackend"])
+def api_only(request) -> dict:
+    return {"message": "Token auth only"}
+
+# Manual permission/ownership check
+@api_view.delete(auth=True)
+def delete_post(request, id: int) -> dict:
+    post = get_object_or_404(Post, id=id)
+    if post.author != request.user:
+        raise ApiError(403, "You can only delete your own posts")
+    post.delete()
+    return {"deleted": True}
+```
+
 ## Important Notes
 
 - The project requires Python 3.10+ and Django 4.0+
@@ -192,3 +270,8 @@ def my_view(request) -> ApiResponse[dict]:
 - Input validation errors return 400 with `{"error": "invalid_input", "error_details": [...]}`
 - Output types are optional but recommended for type safety throughout the view
 - Schema models use `msgspec.Struct` with `omit_defaults=True` and `gc=False` for optimal performance
+- Authentication happens after method check but before input parsing (early exit for unauthorized requests)
+- `auth` parameter accepts `True` (use defaults), `False` (no auth), or list of backend class paths
+- `permissions` parameter implies `auth=True` (authentication is required to check permissions)
+- Use custom `HATCHWAY_AUTH_BACKENDS` setting (not Django's `AUTHENTICATION_BACKENDS`) for API auth configuration
+- AuthToken model requires running migrations: `python manage.py migrate`
