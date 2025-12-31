@@ -10,3 +10,5 @@
 /dist
 /docs/_build
 __pycache__/
+.benchmarks/
+.pytest_cache/

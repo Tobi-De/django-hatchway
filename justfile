@@ -29,6 +29,120 @@ test-file FILE:
 test-func FUNC:
     uv run pytest -k {{FUNC}}
 
+# Watch tests (re-run on file changes)
+test-watch:
+    uv run pytest-watch
+
+# ============================================================================
+# Benchmarking
+# ============================================================================
+
+# Run all benchmarks
+bench:
+    DJANGO_SETTINGS_MODULE=demo.settings uv run --group bench pytest benchmarks/ --benchmark-only --benchmark-sort=mean --ds=demo.settings
+
+# Run benchmarks with comparison to previous results
+bench-compare:
+    DJANGO_SETTINGS_MODULE=demo.settings uv run --group bench pytest benchmarks/ --benchmark-only --benchmark-compare --benchmark-sort=mean --ds=demo.settings
+
+# Run benchmarks and save baseline
+bench-save NAME="baseline":
+    DJANGO_SETTINGS_MODULE=demo.settings uv run --group bench pytest benchmarks/ --benchmark-only --benchmark-save={{NAME}} --benchmark-sort=mean --ds=demo.settings
+
+# Compare benchmarks against a saved baseline
+bench-compare-to NAME="baseline":
+    DJANGO_SETTINGS_MODULE=demo.settings uv run --group bench pytest benchmarks/ --benchmark-only --benchmark-compare={{NAME}} --benchmark-sort=mean --ds=demo.settings
+
+# Run API benchmarks only
+bench-api:
+    DJANGO_SETTINGS_MODULE=demo.settings uv run --group bench pytest benchmarks/test_api_performance.py --benchmark-only --benchmark-sort=mean --ds=demo.settings
+
+# Run framework internals benchmarks only
+bench-internals:
+    DJANGO_SETTINGS_MODULE=demo.settings uv run --group bench pytest benchmarks/test_framework_internals.py --benchmark-only --benchmark-sort=mean --ds=demo.settings
+
+# Run benchmarks with verbose output
+bench-verbose:
+    DJANGO_SETTINGS_MODULE=demo.settings uv run --group bench pytest benchmarks/ --benchmark-only --benchmark-verbose --benchmark-sort=mean --ds=demo.settings
+
+# Run quick benchmarks (fewer iterations)
+bench-quick:
+    DJANGO_SETTINGS_MODULE=demo.settings uv run --group bench pytest benchmarks/ --benchmark-only --benchmark-min-rounds=3 --benchmark-sort=mean --ds=demo.settings
+
+# Generate HTML benchmark report
+bench-html:
+    DJANGO_SETTINGS_MODULE=demo.settings uv run --group bench pytest benchmarks/ --benchmark-only --benchmark-autosave --benchmark-histogram --ds=demo.settings
+    @echo "Open .benchmarks/*/benchmark.html in your browser"
+
+# List all saved benchmarks
+bench-list:
+    @echo "Saved benchmarks in .benchmarks/:"
+    @find .benchmarks -name "*.json" -type f 2>/dev/null | sort | sed 's/.*\//  - /' | sed 's/.json//' || echo "  (no saved benchmarks yet)"
+
+# Show benchmark storage location
+bench-where:
+    @echo "Benchmarks are stored in: .benchmarks/"
+    @du -sh .benchmarks 2>/dev/null | awk '{print "Current size:", $$1}' || echo "Current size: 0"
+    @echo ""
+    @just bench-list
+
+# Delete a specific saved benchmark
+bench-delete NAME:
+    @echo "Deleting benchmark: {{NAME}}"
+    find .benchmarks -name "*{{NAME}}.json" -delete
+    @echo "Deleted. Remaining benchmarks:"
+    @just bench-list
+
+# Export benchmark results to CSV
+bench-export NAME OUTPUT="benchmark_results.csv":
+    @echo "Exporting benchmark '{{NAME}}' to {{OUTPUT}}"
+    @python3 -c "import json, csv, sys; \
+    data = json.load(open([f for f in __import__('pathlib').Path('.benchmarks').rglob('*{{NAME}}.json')][0])); \
+    benchmarks = data['benchmarks']; \
+    with open('{{OUTPUT}}', 'w', newline='') as f: \
+        writer = csv.DictWriter(f, fieldnames=['name', 'min', 'max', 'mean', 'stddev', 'median', 'iqr', 'ops']); \
+        writer.writeheader(); \
+        [writer.writerow({'name': b['name'], 'min': b['stats']['min'], 'max': b['stats']['max'], \
+                          'mean': b['stats']['mean'], 'stddev': b['stats']['stddev'], \
+                          'median': b['stats']['median'], 'iqr': b['stats']['iqr'], \
+                          'ops': b['stats']['ops']}) for b in benchmarks]" 2>/dev/null || echo "Error: Benchmark '{{NAME}}' not found"
+    @echo "Exported to {{OUTPUT}}"
+
+# Compare two saved benchmarks
+bench-diff BASELINE CURRENT:
+    @echo "Comparing {{BASELINE}} vs {{CURRENT}}:"
+    DJANGO_SETTINGS_MODULE=demo.settings uv run --group bench pytest benchmarks/ --benchmark-only --benchmark-compare={{BASELINE}} --benchmark-compare-fail=mean:10% --ds=demo.settings 2>&1 | grep -A 100 "Comparing"
+
+# Export benchmark to CSV/JSON/Markdown
+bench-export-format NAME FORMAT="csv":
+    python3 benchmarks/export_benchmarks.py {{NAME}} --format {{FORMAT}}
+
+# Clean benchmark results
+bench-clean:
+    rm -rf .benchmarks/
+
+# Clean all except specific saved benchmarks (comma-separated)
+bench-clean-except KEEP:
+    @echo "Keeping: {{KEEP}}"
+    @for name in $$(echo "{{KEEP}}" | tr ',' ' '); do \
+        find .benchmarks -name "*$$name.json" -type f | while read file; do \
+            echo "Keeping: $$file"; \
+        done; \
+    done
+    @find .benchmarks -name "*.json" -type f | while read file; do \
+        keep=false; \
+        for name in $$(echo "{{KEEP}}" | tr ',' ' '); do \
+            if echo "$$file" | grep -q "$$name"; then \
+                keep=true; \
+                break; \
+            fi; \
+        done; \
+        if [ "$$keep" = "false" ]; then \
+            echo "Deleting: $$file"; \
+            rm "$$file"; \
+        fi; \
+    done
+
 # ============================================================================
 # Code Quality
 # ============================================================================
