@@ -106,6 +106,7 @@ def extract_signifier(annotation) -> tuple[Any, Any]:
         FileType,
         BodyDirectType,
         QueryOrBodyType,
+        PathOrQueryType,
     }
     # Remove any optional-style wrapper
     optional, internal_annotation = is_optional(annotation)

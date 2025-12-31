@@ -1,36 +1,50 @@
+[build-system]
+build-backend = "uv_build"
+
+requires = [ "uv-build>=0.9.20,<0.10" ]
+
 [project]
 name = "django-hatchway"
-authors = [
-    {name = "Andrew Godwin", email = "andrew@aeracode.org"},
-]
+version = "0.5.2"
+
 description = "An unsurprising Django API framework"
 readme = "README.rst"
+license = { text = "BSD-3-Clause" }
+authors = [
+  { name = "Andrew Godwin", email = "andrew@aeracode.org" },
+]
 requires-python = ">=3.10"
-license = {text = "BSD-3-Clause"}
 classifiers = [
-    "Framework :: Django",
-    "Programming Language :: Python :: 3",
+  "Framework :: Django",
+  "Programming Language :: Python :: 3 :: Only",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
 ]
 dependencies = [
-    "django>=4.0",
-    "pydantic~=1.10",
+  "django>=4",
+  "pydantic~=1.10",
 ]
-dynamic = ["version"]
+
+[dependency-groups]
+dev = [
+  "pytest~=7.2",
+  "pytest-django~=4.5",
+]
 
 [tool.setuptools.dynamic]
-version = {attr = "hatchway.__version__"}
-
-[project.optional-dependencies]
-dev = [
-    "pytest~=7.2",
-    "pytest-django~=4.5"
-]
+version = { attr = "hatchway.__version__" }
 
 [tool.pytest.ini_options]
-pythonpath = ["."]
+pythonpath = [ "." ]
 testpaths = [
-    "tests",
+  "tests",
 ]
 
-DJANGO_SETTINGS_MODULE="tests.test_project.settings"
+DJANGO_SETTINGS_MODULE = "tests.test_project.settings"
 django_find_project = false
+
+[tool.uv.build-backend]
+module-name = "hatchway"
+module-root = ""
