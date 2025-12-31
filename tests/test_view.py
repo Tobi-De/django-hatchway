@@ -269,7 +269,10 @@ def test_string_not_list():
     result = json.loads(response.content)
     assert result["error"] == "invalid_input"
     assert len(result["error_details"]) == 1
-    assert "array" in result["error_details"][0]["msg"] or "list" in result["error_details"][0]["msg"]
+    assert (
+        "array" in result["error_details"][0]["msg"]
+        or "list" in result["error_details"][0]["msg"]
+    )
     assert response.status_code == 400
 
 

@@ -243,7 +243,7 @@ def post_comments(request, post_id: int, limit: int = 10) -> list[CommentSchema]
 
 @api_view.post
 def post_comment_create(
-    request, post_id: int, comment: CommentCreateSchema
+    request, post_id: int, comment: CommentCreateSchema, validate_output=False
 ) -> ApiResponse[CommentSchema]:
     """
     Create a comment on a post.
@@ -437,3 +437,59 @@ def swagger_ui(request):
     </html>
     """
     return HttpResponse(html, content_type="text/html")
+
+
+# ============================================================================
+# Authentication Examples
+# ============================================================================
+
+
+@api_view.get(auth=True)
+def user_profile(request) -> dict:
+    """
+    Protected endpoint - requires authentication.
+    Accepts both session and token authentication.
+    """
+    return {
+        "user_id": request.user.id,
+        "username": request.user.username,
+        "email": request.user.email,
+    }
+
+
+@api_view.post(auth=True, permissions=["api.add_post"])
+def post_create_protected(request, data: PostCreateSchema) -> PostSchema:
+    """
+    Protected endpoint - requires authentication and 'api.add_post' permission.
+    Demonstrates permission checking.
+    """
+    post = Post.objects.create(author=request.user, **data.dict())
+    return post
+
+
+@api_view.delete(auth=True)
+def post_delete_auth(request, id: int) -> dict:
+    """
+    Protected delete - requires authentication.
+    Only allows users to delete their own posts.
+    """
+    post = get_object_or_404(Post, id=id)
+
+    # Only allow users to delete their own posts
+    if post.author != request.user:
+        raise ApiError(403, "You can only delete your own posts")
+
+    post.delete()
+    return {"deleted": True}
+
+
+# @api_view.get(auth=["hatchway.auth.TokenAuthBackend"])
+# def api_only_endpoint(request) -> dict:
+#     """
+#     API-only endpoint - only accepts token authentication, not sessions.
+#     Demonstrates custom backend selection.
+#     """
+#     return {
+#         "message": "This endpoint only accepts token authentication",
+#         "user_id": request.user.id,
+#     }

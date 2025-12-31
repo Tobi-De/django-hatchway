@@ -1,6 +1,9 @@
 django-hatchway
 ===============
 
+> [!IMPORTANT]
+> Fork of https://github.com/andrewgodwin/django-hatchway
+
 Hatchway is an API framework inspired by the likes of FastAPI, but while trying
 to keep API views as much like standard Django views as possible.
 
@@ -224,3 +227,114 @@ to make dicts. Some examples:
 
 These will also work in JSON bodies too, though of course you don't need them
 there; nevertheless, they still work for compatibility reasons.
+
+Authentication & Permissions
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Hatchway includes built-in authentication and permissions support that integrates
+with Django's standard authentication system.
+
+Basic Authentication
+++++++++++++++++++++
+
+To require authentication for a view, use the ``auth=True`` parameter:
+
+.. code-block:: python
+
+    from hatchway import api_view
+
+    @api_view.get(auth=True)
+    def user_profile(request) -> dict:
+        return {
+            "user_id": request.user.id,
+            "username": request.user.username,
+            "email": request.user.email,
+        }
+
+This endpoint will:
+
+* Return a **401 Unauthorized** response with ``{"error": "authentication_required"}``
+  if the user is not authenticated
+* Accept both **session authentication** (Django's standard session middleware)
+  and **token authentication** (via ``Authorization: Token <token>`` header)
+
+Permission Checking
++++++++++++++++++++
+
+You can require specific Django permissions using the ``permissions`` parameter:
+
+.. code-block:: python
+
+    from hatchway import api_view
+
+    @api_view.post(auth=True, permissions=["blog.add_post"])
+    def create_post(request, data: PostCreateSchema) -> PostSchema:
+        post = Post.objects.create(author=request.user, **data.dict())
+        return post
+
+This endpoint will:
+
+* Return a **401 Unauthorized** response if the user is not authenticated
+* Return a **403 Forbidden** response with ``{"error": "permission_denied"}``
+  if the user lacks the required permission
+* Allow the request to proceed if the user has the ``blog.add_post`` permission
+
+You can require multiple permissions by passing a list. All permissions must be
+granted for the request to succeed.
+
+Token Authentication
+++++++++++++++++++++
+
+Hatchway includes a built-in token authentication model. To create a token for a user:
+
+.. code-block:: bash
+
+    python manage.py create_token username --days 365 --description "API access"
+
+This will output a secure token that can be used in API requests:
+
+.. code-block:: bash
+
+    curl -H "Authorization: Token <token>" https://example.com/api/endpoint/
+
+Tokens can be managed through the Django admin interface. They include:
+
+* Automatic expiration (default: 365 days)
+* Optional descriptions for tracking token usage
+* Association with a specific user account
+
+Custom Authentication Backends
++++++++++++++++++++++++++++++++
+
+By default, Hatchway tries both session and token authentication. You can
+restrict to specific backends by passing a list of backend class paths:
+
+.. code-block:: python
+
+    @api_view.get(auth=["hatchway.auth.TokenAuthBackend"])
+    def api_only_endpoint(request) -> dict:
+        # This endpoint only accepts token authentication, not sessions
+        return {"message": "Token auth only", "user_id": request.user.id}
+
+Available backends:
+
+* ``hatchway.auth.SessionAuthBackend`` - Django session authentication
+* ``hatchway.auth.TokenAuthBackend`` - Token-based authentication
+
+You can create custom authentication backends by implementing the ``AuthBackend``
+protocol (a class with an ``authenticate(request)`` method that returns a user
+or ``None``).
+
+Configuration
++++++++++++++
+
+Add to your Django ``settings.py`` to customize authentication backends:
+
+.. code-block:: python
+
+    HATCHWAY_AUTH_BACKENDS = [
+        'hatchway.auth.SessionAuthBackend',
+        'hatchway.auth.TokenAuthBackend',
+    ]
+
+These backends are tried in sequence; the first one to return a user wins.

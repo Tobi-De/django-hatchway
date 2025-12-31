@@ -1,7 +1,9 @@
-from typing import Any, Dict
+from typing import Any, get_args, get_origin
+
+from .types import is_model_subclass
 
 import msgspec
-from django.db.models import Manager, QuerySet
+from django.db.models import Manager, QuerySet, Model
 from django.db.models.fields.files import FieldFile
 from django.template import Variable, VariableDoesNotExist
 
@@ -35,6 +37,32 @@ class Schema(msgspec.Struct, omit_defaults=True, gc=False):
 
         return msgspec.convert(data, type=cls)
 
-    def dict(self) -> Dict[str, Any]:
+    def dict(self) -> dict[str, Any]:
         """Convert schema instance to a dictionary."""
         return msgspec.to_builtins(self)
+
+
+def convert_from_orm(data: Any, target_type: Any) -> Any:
+    """
+    Convert Django ORM data to Schema instances based on target type.
+    """
+    if not target_type:
+        return data
+
+    origin = get_origin(target_type)
+
+    # Handle collections: list[Schema], set[Schema], tuple[Schema]
+    if origin in (list, set, tuple) and data:
+        first_item = next(iter(data), None)
+        if first_item and isinstance(first_item, Model):
+            schema_type = get_args(target_type)[0]
+            if is_model_subclass(schema_type):
+                converted = [schema_type.from_orm(obj) for obj in data]
+                # Preserve collection type (list vs set vs tuple)
+                return origin(converted) if origin else converted
+
+    # Handle single object: Schema
+    elif isinstance(data, Model) and is_model_subclass(target_type):
+        return target_type.from_orm(data)
+
+    return data

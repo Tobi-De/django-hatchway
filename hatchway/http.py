@@ -1,6 +1,7 @@
 import json
 from typing import Generic, TypeVar
 
+import msgspec
 from django.core.serializers.json import DjangoJSONEncoder
 from django.http import HttpResponse
 
@@ -33,8 +34,14 @@ class ApiResponse(Generic[T], HttpResponse):
         """
         Converts whatever our current data is into HttpResponse content
         """
-        # TODO: Automatically call this when we're asked to write output?
-        self.content = json.dumps(self.data, cls=self.encoder, **self.json_dumps_params)
+        # Use msgspec for faster JSON encoding instead of stdlib json
+        # Falls back to json.dumps if encoder is customized
+        if self.encoder == DjangoJSONEncoder and not self.json_dumps_params:
+            self.content = msgspec.json.encode(self.data)
+        else:
+            self.content = json.dumps(
+                self.data, cls=self.encoder, **self.json_dumps_params
+            )
 
 
 class ApiError(BaseException):

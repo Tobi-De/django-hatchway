@@ -1,8 +1,10 @@
 *.egg
 *.egg-info
 *.pyc
+.benchmarks/
 .DS_Store
 .idea/*
+.pytest_cache/
 .venv
 .vscode
 /*.env*
@@ -10,5 +12,3 @@
 /dist
 /docs/_build
 __pycache__/
-.benchmarks/
-.pytest_cache/

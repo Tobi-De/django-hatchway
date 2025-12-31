@@ -7,8 +7,11 @@ from django.core import files
 from django.http import HttpRequest, HttpResponseNotAllowed, QueryDict
 from django.http.multipartparser import MultiPartParser
 
+from .auth import authenticate_request, get_backends
 from .constants import InputSource
 from .http import ApiError, ApiResponse
+from .permissions import check_permissions, require_authentication
+from .schema import convert_from_orm
 from .types import (
     BodyDirectType,
     BodyType,
@@ -43,11 +46,17 @@ class ApiView:
         output_type: Any = None,
         implicit_lists: bool = True,
         method: str | None = None,
+        auth: bool | list[str] = False,
+        permissions: list[str] | None = None,
+        validate_output: bool = True,
     ):
         self.view = view
         self.implicit_lists = implicit_lists
         self.view_name = getattr(view, "__name__", "unknown_view")
         self.method = method
+        self.auth = auth
+        self.permissions = permissions or []
+        self.validate_output = validate_output
         # Extract input/output types from view annotations if we need to
         self.input_types = input_types
         if self.input_types is None:
@@ -65,24 +74,92 @@ class ApiView:
         self.compile()
 
     @classmethod
-    def get(cls, view: Callable):
-        return cls(view=view, method="get")
+    def _create_method_decorator(
+        cls,
+        method: str,
+        view: Callable | None = None,
+        auth: bool | list[str] = False,
+        permissions: list[str] | None = None,
+        validate_output: bool = True,
+    ):
+        """Factory for creating HTTP method decorators."""
+        if view is None:
+            # Called with arguments: @api_view.get(auth=True)
+            return lambda v: cls(
+                view=v,
+                method=method,
+                auth=auth,
+                permissions=permissions,
+                validate_output=validate_output,
+            )
+        # Called without arguments: @api_view.get
+        return cls(
+            view=view,
+            method=method,
+            auth=auth,
+            permissions=permissions,
+            validate_output=validate_output,
+        )
 
     @classmethod
-    def post(cls, view: Callable):
-        return cls(view=view, method="post")
+    def get(
+        cls,
+        view: Callable | None = None,
+        auth: bool | list[str] = False,
+        permissions: list[str] | None = None,
+        validate_output: bool = True,
+    ):
+        return cls._create_method_decorator(
+            "get", view, auth, permissions, validate_output
+        )
 
     @classmethod
-    def put(cls, view: Callable):
-        return cls(view=view, method="put")
+    def post(
+        cls,
+        view: Callable | None = None,
+        auth: bool | list[str] = False,
+        permissions: list[str] | None = None,
+        validate_output: bool = True,
+    ):
+        return cls._create_method_decorator(
+            "post", view, auth, permissions, validate_output
+        )
 
     @classmethod
-    def patch(cls, view: Callable):
-        return cls(view=view, method="patch")
+    def put(
+        cls,
+        view: Callable | None = None,
+        auth: bool | list[str] = False,
+        permissions: list[str] | None = None,
+        validate_output: bool = True,
+    ):
+        return cls._create_method_decorator(
+            "put", view, auth, permissions, validate_output
+        )
 
     @classmethod
-    def delete(cls, view: Callable):
-        return cls(view=view, method="delete")
+    def patch(
+        cls,
+        view: Callable | None = None,
+        auth: bool | list[str] = False,
+        permissions: list[str] | None = None,
+        validate_output: bool = True,
+    ):
+        return cls._create_method_decorator(
+            "patch", view, auth, permissions, validate_output
+        )
+
+    @classmethod
+    def delete(
+        cls,
+        view: Callable | None = None,
+        auth: bool | list[str] = False,
+        permissions: list[str] | None = None,
+        validate_output: bool = True,
+    ):
+        return cls._create_method_decorator(
+            "delete", view, auth, permissions, validate_output
+        )
 
     @classmethod
     def sources_for_input(cls, input_type) -> tuple[list[InputSource], Any]:
@@ -213,18 +290,14 @@ class ApiView:
                     field_type = model_type
                 field_list.append((name, Optional[field_type]))
 
-            self.input_model = msgspec.defstruct(
-                f"{self.view_name}_input",
-                field_list
-            )
+            self.input_model = msgspec.defstruct(f"{self.view_name}_input", field_list)
         except (RuntimeError, TypeError) as e:
             raise ValueError(
                 f"One or more inputs on view {self.view_name} have a bad configuration: {e}"
             )
         if self.output_type is not None:
             self.output_model = msgspec.defstruct(
-                f"{self.view_name}_output",
-                [("value", self.output_type)]
+                f"{self.view_name}_output", [("value", self.output_type)]
             )
 
     def __call__(self, request: HttpRequest, *args, **kwargs):
@@ -234,88 +307,119 @@ class ApiView:
         # Do a method check if we have one set
         if self.method and self.method.upper() != request.method:
             return HttpResponseNotAllowed([self.method])
-        # For each item we can source, go find it if we can
-        query_values = self.get_values(request.GET)
-        body_values = self.get_values(request.POST)
-        files_values = self.get_values(request.FILES)
-        # If it's a PUT or PATCH method, work around Django not handling FILES
-        # or POST on those requests
-        if request.method in ["PATCH", "PUT"]:
-            if request.content_type == "multipart/form-data":
-                POST, FILES = MultiPartParser(
-                    request.META, request, request.upload_handlers, request.encoding
-                ).parse()
-                body_values = self.get_values(POST)
-                files_values = self.get_values(FILES)
-            elif request.content_type == "application/x-www-form-urlencoded":
-                POST = QueryDict(request.body, encoding=request._encoding)
-                body_values = self.get_values(POST)
-        # If there was a JSON body, go load that
-        if request.content_type == "application/json" and request.body.strip():
-            body_values.update(self.get_values(json.loads(request.body)))
-        values = {}
-        for name, sources in self.sources.items():
-            for source in sources:
-                if source == InputSource.path:
-                    if name in kwargs:
-                        values[name] = kwargs[name]
+
+        # Authentication and permission checking
+        if self.auth or self.permissions:
+            # Get backends: pass list if custom, None for defaults
+            backend_paths = self.auth if isinstance(self.auth, list) else None
+            backends = get_backends(backend_paths)
+
+            # Authenticate
+            user, backend_name = authenticate_request(request, backends)
+            if user is not None:
+                request.user = user
+
+            # Check if auth required
+            if self.auth:
+                success, error = require_authentication(user)
+                if not success:
+                    return ApiResponse({"error": error}, status=401, finalize=True)
+
+            # Check permissions
+            if self.permissions:
+                success, error = check_permissions(user, self.permissions)
+                if not success:
+                    status = 401 if error == "authentication_required" else 403
+                    return ApiResponse({"error": error}, status=status, finalize=True)
+
+        view_kwargs = {}
+
+        if self.sources or self.input_files:
+            query_values = self.get_values(request.GET)
+            body_values = self.get_values(request.POST)
+            files_values = self.get_values(request.FILES)
+            # If it's a PUT or PATCH method, work around Django not handling FILES
+            # or POST on those requests
+            if request.method in ["PATCH", "PUT"]:
+                if request.content_type == "multipart/form-data":
+                    POST, FILES = MultiPartParser(
+                        request.META, request, request.upload_handlers, request.encoding
+                    ).parse()
+                    body_values = self.get_values(POST)
+                    files_values = self.get_values(FILES)
+                elif request.content_type == "application/x-www-form-urlencoded":
+                    POST = QueryDict(request.body, encoding=request._encoding)
+                    body_values = self.get_values(POST)
+            # If there was a JSON body, go load that
+            if request.content_type == "application/json" and request.body.strip():
+                body_values.update(self.get_values(json.loads(request.body)))
+            values = {}
+            for name, sources in self.sources.items():
+                for source in sources:
+                    if source == InputSource.path:
+                        if name in kwargs:
+                            values[name] = kwargs[name]
+                            break
+                    elif source == InputSource.query:
+                        if name in query_values:
+                            values[name] = query_values[name]
+                            break
+                    elif source == InputSource.query_list:
+                        if name in query_values:
+                            values[name] = query_values[name]
+                            if not isinstance(values[name], list):
+                                values[name] = [values[name]]
+                            break
+                    elif source == InputSource.body:
+                        if name in body_values:
+                            values[name] = body_values[name]
+                            break
+                    elif source == InputSource.file:
+                        if name in files_values:
+                            values[name] = files_values[name]
+                            break
+                    elif source == InputSource.body_direct:
+                        values[name] = body_values
                         break
-                elif source == InputSource.query:
-                    if name in query_values:
-                        values[name] = query_values[name]
+                    elif source == InputSource.query_and_body_direct:
+                        values[name] = dict(query_values)
+                        values[name].update(body_values)
                         break
-                elif source == InputSource.query_list:
-                    if name in query_values:
-                        values[name] = query_values[name]
-                        if not isinstance(values[name], list):
-                            values[name] = [values[name]]
-                        break
-                elif source == InputSource.body:
-                    if name in body_values:
-                        values[name] = body_values[name]
-                        break
-                elif source == InputSource.file:
-                    if name in files_values:
-                        values[name] = files_values[name]
-                        break
-                elif source == InputSource.body_direct:
-                    values[name] = body_values
-                    break
-                elif source == InputSource.query_and_body_direct:
-                    values[name] = dict(query_values)
-                    values[name].update(body_values)
-                    break
+                    else:
+                        raise ValueError(f"Unknown source {source}")
                 else:
-                    raise ValueError(f"Unknown source {source}")
-            else:
-                values[name] = None
-        # Validate and coerce types
+                    values[name] = None
+            # Validate and coerce types
+            try:
+                model_instance = msgspec.convert(
+                    values, type=self.input_model, strict=False
+                )
+            except msgspec.ValidationError as error:
+                error_msg = str(error)
+                error_details = [
+                    {
+                        "loc": ["<unknown>"],
+                        "msg": error_msg,
+                        "type": "value_error",
+                    }
+                ]
+                return ApiResponse(
+                    {"error": "invalid_input", "error_details": error_details},
+                    status=400,
+                    finalize=True,
+                )
+            view_kwargs = {
+                name: getattr(model_instance, name)
+                for name in model_instance.__struct_fields__
+                if name in values and values[name] is not None  # Trim out missing fields
+            }
+            # Add in any files
+            # TODO: HTTP error if file is not optional
+            for name in self.input_files:
+                view_kwargs[name] = files_values.get(name, None)
+                
         try:
-            model_instance = msgspec.convert(values, type=self.input_model, strict=False)
-        except msgspec.ValidationError as error:
-            error_msg = str(error)
-            error_details = [{
-                'loc': ['<unknown>'],
-                'msg': error_msg,
-                'type': 'value_error',
-            }]
-            return ApiResponse(
-                {"error": "invalid_input", "error_details": error_details},
-                status=400,
-                finalize=True,
-            )
-        kwargs = {
-            name: getattr(model_instance, name)
-            for name in model_instance.__struct_fields__
-            if name in values and values[name] is not None  # Trim out missing fields
-        }
-        # Add in any files
-        # TODO: HTTP error if file is not optional
-        for name in self.input_files:
-            kwargs[name] = files_values.get(name, None)
-        # Call the view with those as kwargs
-        try:
-            response = self.view(request, **kwargs)
+            response = self.view(request, **view_kwargs)
         except TypeError as error:
             # TODO: Handle this better by inspecting for default values on the view
             if "required positional argument" in str(error):
@@ -332,32 +436,12 @@ class ApiView:
         # If it's not an ApiResponse, make it one
         if not isinstance(response, ApiResponse):
             response = ApiResponse(response)
-        # Use msgspec to coerce the output response
-        if self.output_type is not None:
-            # Check if we need to convert Django ORM objects first
-            data_to_convert = response.data
-            origin = get_origin(self.output_type)
-
-            # Handle list[Schema] case - convert ORM objects
-            if origin in (list, set, tuple) and data_to_convert:
-                import django.db.models
-                # Check if first item is a Django model instance
-                first_item = next(iter(data_to_convert), None)
-                if first_item and isinstance(first_item, django.db.models.Model):
-                    # Get the schema type from the output type
-                    from typing import get_args
-                    schema_type = get_args(self.output_type)[0]
-                    if is_model_subclass(schema_type):
-                        # Convert each ORM object using from_orm
-                        data_to_convert = [schema_type.from_orm(obj) for obj in data_to_convert]
-            # Handle single Schema case
-            elif not isinstance(data_to_convert, (dict, list, str, int, float, bool, type(None))):
-                import django.db.models
-                if isinstance(data_to_convert, django.db.models.Model):
-                    if is_model_subclass(self.output_type):
-                        data_to_convert = self.output_type.from_orm(data_to_convert)
-
-            validated = msgspec.convert({"value": data_to_convert}, type=self.output_model, strict=False)
+            
+        if self.output_type is not None and self.validate_output:
+            data_to_convert = convert_from_orm(response.data, self.output_type)
+            validated = msgspec.convert(
+                {"value": data_to_convert}, type=self.output_model, strict=False
+            )
             response.data = msgspec.to_builtins(validated)["value"]
         elif isinstance(response.data, msgspec.Struct):
             response.data = msgspec.to_builtins(response.data)
