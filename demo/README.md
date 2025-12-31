@@ -188,6 +188,26 @@ Access the Django admin at `http://localhost:8000/admin/` to manage posts and co
 - `urls.py` - URL routing with examples of both direct mapping and `methods()` helper
 - `admin.py` - Django admin configuration
 
+## Performance Benchmarking
+
+The project includes comprehensive performance benchmarks to track API and framework performance:
+
+```bash
+# Run all benchmarks
+just bench
+
+# Run only API benchmarks (from project root)
+just bench-api
+
+# Save performance baseline
+just bench-save my-baseline
+
+# Compare against baseline after making changes
+just bench-compare-to my-baseline
+```
+
+See `../benchmarks/README.md` for detailed information on benchmarking.
+
 ## Learning Tips
 
 1. Start by reading `views.py` - each view has detailed comments explaining what feature it demonstrates
@@ -195,3 +215,4 @@ Access the Django admin at `http://localhost:8000/admin/` to manage posts and co
 3. Look at `schemas.py` to see how Pydantic validators are applied
 4. Check `urls.py` to see the `methods()` helper in action for multi-method routing
 5. Experiment with the square bracket notation for lists and dicts in form data
+6. Run benchmarks to understand performance characteristics

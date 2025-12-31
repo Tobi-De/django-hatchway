@@ -23,6 +23,29 @@ pytest tests/test_view.py
 pytest tests/test_view.py::test_basic_view
 ```
 
+### Benchmarking
+```bash
+# Run all benchmarks
+just bench
+
+# Run API benchmarks only
+just bench-api
+
+# Run framework internals benchmarks
+just bench-internals
+
+# Save baseline for comparison
+just bench-save baseline
+
+# Compare against baseline
+just bench-compare-to baseline
+
+# Generate HTML report
+just bench-html
+```
+
+See `benchmarks/README.md` for detailed benchmarking guide.
+
 ### Code Quality
 ```bash
 # Run pre-commit hooks manually
