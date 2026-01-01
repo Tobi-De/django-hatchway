@@ -10,12 +10,8 @@ Comprehensive demo of all Hatchway features:
 - List/dict return types
 """
 
-import os
-
 from django.core.files import File
-from django.http import HttpResponse
 from django.shortcuts import get_object_or_404
-from django.views.decorators.cache import cache_control
 
 from hatchway import (
     ApiError,
@@ -25,6 +21,7 @@ from hatchway import (
     PathOrQuery,
     Query,
     QueryOrBody,
+    Schema,
     api_view,
 )
 
@@ -364,84 +361,48 @@ def health_check(request) -> dict:
     }
 
 
-# ============================================================================
-# OpenAPI Documentation
-# ============================================================================
-
-
-def openapi_schema(request):
-    """
-    Serve the OpenAPI schema YAML file.
-    Not using @api_view decorator since we want to return raw YAML.
-    """
-    schema_path = os.path.join(os.path.dirname(__file__), "openapi.yaml")
-
-    with open(schema_path) as f:
-        schema_content = f.read()
-
-    return HttpResponse(
-        schema_content,
-        content_type="application/x-yaml",
-        headers={
-            "Access-Control-Allow-Origin": "*",  # Allow CORS for external tools
-        },
-    )
-
-
-@cache_control(max_age=3600)
-def swagger_ui(request):
-    """
-    Serve Swagger UI for interactive API documentation.
-    Uses the hosted Swagger UI with our OpenAPI schema.
-    """
-    html = """
-    <!DOCTYPE html>
-    <html lang="en">
-    <head>
-        <meta charset="UTF-8">
-        <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>Hatchway Demo API - Swagger UI</title>
-        <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/swagger-ui-dist@5/swagger-ui.css">
-        <style>
-            body { margin: 0; }
-            .swagger-ui .topbar { display: none; }
-        </style>
-    </head>
-    <body>
-        <div id="swagger-ui"></div>
-        <script src="https://cdn.jsdelivr.net/npm/swagger-ui-dist@5/swagger-ui-bundle.js"></script>
-        <script src="https://cdn.jsdelivr.net/npm/swagger-ui-dist@5/swagger-ui-standalone-preset.js"></script>
-        <script>
-            window.onload = function() {
-                window.ui = SwaggerUIBundle({
-                    url: '/api/openapi.yaml',
-                    dom_id: '#swagger-ui',
-                    deepLinking: true,
-                    presets: [
-                        SwaggerUIBundle.presets.apis,
-                        SwaggerUIStandalonePreset
-                    ],
-                    plugins: [
-                        SwaggerUIBundle.plugins.DownloadUrl
-                    ],
-                    layout: "StandaloneLayout",
-                    defaultModelsExpandDepth: 1,
-                    defaultModelExpandDepth: 1,
-                    docExpansion: "list",
-                    filter: true,
-                    tryItOutEnabled: true
-                });
-            };
-        </script>
-    </body>
-    </html>
-    """
-    return HttpResponse(html, content_type="text/html")
-
 
 # ============================================================================
 # Authentication Examples
 # ============================================================================
+
+
+class LoginRequest(Schema):
+    """Schema for login credentials."""
+
+    username: str
+    password: str
+
+
+class TokenResponse(Schema):
+    """Schema for token response."""
+
+    token: str
+    expires_at: str
+
+
+@api_view.post
+def obtain_token(request, credentials: LoginRequest) -> TokenResponse:
+    """
+    Obtain an authentication token.
+    Demonstrates: Token creation endpoint, authentication
+    """
+    from django.contrib.auth import authenticate
+
+    from hatchway.models import AuthToken
+
+    # Authenticate the user
+    user = authenticate(username=credentials.username, password=credentials.password)
+
+    if user is None:
+        raise ApiError(401, "Invalid credentials")
+
+    # Create a token for the user
+    token = AuthToken.create_token(
+        user=user, days_valid=365, description="API access via login"
+    )
+
+    return TokenResponse(token=token.token, expires_at=token.expires.isoformat())
 
 
 @api_view.get(auth=True)
@@ -483,13 +444,13 @@ def post_delete_auth(request, id: int) -> dict:
     return {"deleted": True}
 
 
-# @api_view.get(auth=["hatchway.auth.TokenAuthBackend"])
-# def api_only_endpoint(request) -> dict:
-#     """
-#     API-only endpoint - only accepts token authentication, not sessions.
-#     Demonstrates custom backend selection.
-#     """
-#     return {
-#         "message": "This endpoint only accepts token authentication",
-#         "user_id": request.user.id,
-#     }
+@api_view.get(auth=["hatchway.auth.TokenAuthBackend"])
+def api_only_endpoint(request) -> dict:
+    """
+    API-only endpoint - only accepts token authentication, not sessions.
+    Demonstrates custom backend selection.
+    """
+    return {
+        "message": "This endpoint only accepts token authentication",
+        "user_id": request.user.id,
+    }

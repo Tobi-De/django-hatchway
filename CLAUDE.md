@@ -261,6 +261,93 @@ def delete_post(request, id: int) -> dict:
     return {"deleted": True}
 ```
 
+### OpenAPI Specification Generation
+
+Hatchway provides automatic OpenAPI 3.0 specification generation from your API views.
+
+**Module**: `hatchway.openapi`
+
+**Key Components**:
+- `OpenAPIConfig` - Configuration for OpenAPI spec generation
+- `OpenAPIGenerator` - Generates OpenAPI spec from URL patterns
+- `create_openapi_views()` - Factory function to create documentation views
+- `openapi_json_view`, `openapi_yaml_view`, `swagger_ui_view` - Pre-built view functions
+
+**How it works**:
+1. Introspects Django URL patterns to find `ApiView` and `Methods` instances
+2. Extracts parameter information from type hints (Path, Query, Body, File types)
+3. Generates OpenAPI schema from `msgspec.Struct` models with validation constraints
+4. Creates complete OpenAPI 3.0 spec with paths, operations, parameters, request bodies, responses
+
+**Setup Example** (see `demo/api/urls.py`):
+
+```python
+from django.urls import path
+from hatchway import methods
+from hatchway.openapi import OpenAPIConfig, create_openapi_views
+from . import views
+
+# Define your API endpoints
+api_endpoints = [
+    path("posts/", views.post_list, name="post_list"),
+    path("posts/create/", views.post_create, name="post_create"),
+    path("posts/<int:id>/", methods(
+        get=views.post_detail,
+        patch=views.post_update,
+        delete=views.post_delete,
+    )),
+]
+
+# Configure OpenAPI
+openapi_config = OpenAPIConfig(
+    title="My API",
+    version="1.0.0",
+    description="My awesome API",
+    contact={"name": "Support", "email": "support@example.com"},
+    license={"name": "MIT"},
+    servers=[{"url": "http://localhost:8000/api"}],
+    tags=[
+        {"name": "posts", "description": "Blog post management"},
+    ],
+)
+
+# Generate OpenAPI views
+openapi_json, openapi_yaml, swagger_ui = create_openapi_views(
+    openapi_config, api_endpoints
+)
+
+# Add to URL patterns
+urlpatterns = [
+    path("docs/", swagger_ui, name="swagger_ui"),
+    path("openapi.json", openapi_json, name="openapi_json"),
+    path("openapi.yaml", openapi_yaml, name="openapi_yaml"),
+] + api_endpoints
+```
+
+**Schema Generation**:
+- Automatically converts `msgspec.Struct` to OpenAPI schemas
+- Preserves validation constraints (min/max, length, pattern, etc.) from msgspec.Meta
+- Supports nested schemas, lists, dicts, unions, and optional types
+- Generates proper `$ref` references for reusable schemas
+
+**Parameter Detection**:
+- Path parameters: Extracted from URL patterns (`<int:id>` → path parameter)
+- Query parameters: From `Query[T]`, `PathOrQuery[T]`, `QueryOrBody[T]` annotations
+- Body parameters: From `Body[T]`, `BodyDirect[T]`, or Schema models
+- File parameters: From `File[T]` annotations
+- Default values and required status automatically detected from function signatures
+
+**Response Generation**:
+- Success response schema from function return type hint
+- Automatic status code selection (201 for POST, 200 for others)
+- Standard error responses (400 validation, 401 auth, 403 permission)
+- Supports `ApiResponse[T]` for custom headers/status
+
+**Authentication & Security**:
+- Detects `auth=True` and `permissions=[]` decorators
+- Adds security requirements to operations
+- Can be customized with security schemes in OpenAPIConfig
+
 ## Important Notes
 
 - The project requires Python 3.10+ and Django 4.0+

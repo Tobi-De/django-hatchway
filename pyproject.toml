@@ -25,6 +25,7 @@ classifiers = [
 dependencies = [
   "django>=4",
   "msgspec>=0.18",
+  "openapi-spec-models>=0.1.1",
 ]
 
 [dependency-groups]
@@ -53,3 +54,8 @@ django_find_project = false
 [tool.uv.build-backend]
 module-name = "hatchway"
 module-root = ""
+
+[tool.uv.workspace]
+members = [
+    "openapi-spec-models",
+]
